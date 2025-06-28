@@ -57,6 +57,115 @@ resource "aws_dynamodb_table" "tf_locks" {
 
 data "aws_caller_identity" "current" {}
 
+resource "aws_codestarconnections_connection" "github" {
+  name          = "voicenest-github-connection"
+  provider_type = "GitHub"
+}
+
+resource "aws_codebuild_project" "voicenest_build" {
+  name          = "${var.project_name}-build"
+  description   = "Build Lambda and deploy infrastructure."
+  service_role  = aws_iam_role.codebuild.arn
+
+  source {
+    type            = "GITHUB"
+    location        = "https://github.com/shadreza/voicenest-serverless"
+    git_clone_depth = 1
+    buildspec       = "buildspec.yml"
+  }
+
+  artifacts {
+    type = "NO_ARTIFACTS"
+  }
+
+  environment {
+    compute_type                = "BUILD_GENERAL1_SMALL"
+    image                       = "aws/codebuild/standard:7.0"
+    type                        = "LINUX_CONTAINER"
+    privileged_mode             = true
+  }
+
+  source_version = "master"
+}
+
+resource "aws_codepipeline" "voicenest_pipeline" {
+  name     = "${var.project_name}-pipeline"
+  role_arn = aws_iam_role.codepipeline.arn
+
+  artifact_store {
+    location = aws_s3_bucket.lambda_deploy.bucket
+    type     = "S3"
+  }
+
+  stage {
+    name = "Source"
+    action {
+      name             = "SourceAction"
+      category         = "Source"
+      owner            = "AWS"
+      provider         = "CodeStarSourceConnection"
+      version          = "1"
+      output_artifacts = ["source_output"]
+
+      configuration = {
+        ConnectionArn = aws_codestarconnections_connection.github.arn
+        FullRepositoryId = "shadreza/voicenest-serverless"
+        BranchName = "master"
+      }
+    }
+  }
+
+  stage {
+    name = "Build"
+    action {
+      name             = "BuildAction"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      input_artifacts  = ["source_output"]
+      output_artifacts = ["build_output"]
+      version          = "1"
+      configuration = {
+        ProjectName = aws_codebuild_project.voicenest_build.name
+      }
+    }
+  }
+}
+
+resource "aws_iam_role" "codebuild" {
+  name = "${var.project_name}-codebuild-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = { Service = "codebuild.amazonaws.com" },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "codebuild_policy" {
+  role       = aws_iam_role.codebuild.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_iam_role" "codepipeline" {
+  name = "${var.project_name}-codepipeline-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = { Service = "codepipeline.amazonaws.com" },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "codepipeline_policy" {
+  role       = aws_iam_role.codepipeline.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
 # VPC and Networking (no NAT Gateway or EIP to stay within free tier)
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
