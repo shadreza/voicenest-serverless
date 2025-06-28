@@ -7,6 +7,7 @@ import requests
 import base64
 import time
 import logging
+import struct
 
 # Configure logging
 logger = logging.getLogger()
@@ -51,25 +52,36 @@ def handler(event, context):
             if is_base64:
                 audio_bytes = base64.b64decode(body)
             else:
-                # Handle case where body might already be bytes
-                if isinstance(body, str):
-                    audio_bytes = body.encode()
-                else:
-                    audio_bytes = body
+                # Try to decode as base64 anyway (API Gateway might not set the flag correctly)
+                try:
+                    audio_bytes = base64.b64decode(body)
+                    logger.info("Successfully decoded body as base64 despite flag being False")
+                except:
+                    if isinstance(body, str):
+                        audio_bytes = body.encode()
+                    else:
+                        audio_bytes = body
         except Exception as e:
             logger.error(f"Failed to decode audio data: {str(e)}")
             return _response(400, "Invalid audio data format")
         
         logger.info(f"Audio data size: {len(audio_bytes)} bytes")
         
-        # Validate audio data size (minimum check)
-        if len(audio_bytes) < 1000:  # Less than 1KB is likely invalid
+        # Validate audio data size
+        if len(audio_bytes) < 1000:
             logger.error(f"Audio data too small: {len(audio_bytes)} bytes")
             return _response(400, "Audio data appears to be invalid or too small")
         
-        # Save audio to temporary file with proper extension
+        # Validate WAV file format
+        if not _is_valid_wav(audio_bytes):
+            logger.error("Invalid WAV file format")
+            return _response(400, "Invalid WAV file format")
+        
+        # Log WAV file properties
+        _log_wav_properties(audio_bytes)
+        
+        # Save audio to temporary file
         try:
-            # Use .wav extension instead of .webm for better compatibility
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
                 tmp_audio.write(audio_bytes)
                 tmp_audio_path = tmp_audio.name
@@ -96,19 +108,25 @@ def handler(event, context):
         
         logger.info(f"Transcript: {transcript_text}")
 
+        # Skip empty transcripts
+        if not transcript_text.strip():
+            logger.warning("Transcript is empty")
+            return _response(400, "No speech detected in audio")
+
         # Detect dominant language
         logger.info("Detecting language...")
         try:
             lang_detection = comprehend.detect_dominant_language(Text=transcript_text)
             lang_code = lang_detection['Languages'][0]['LanguageCode']
-            logger.info(f"Detected language: {lang_code}")
+            confidence = lang_detection['Languages'][0]['Score']
+            logger.info(f"Detected language: {lang_code} (confidence: {confidence:.2f})")
         except Exception as e:
             logger.error(f"Language detection failed: {str(e)}")
             lang_code = "en"  # Default to English
         
         # Translate to English (if needed)
         translated_text = transcript_text
-        if lang_code != "en":
+        if lang_code != "en" and lang_code in ['es', 'fr', 'de', 'it', 'pt', 'ja', 'ko', 'zh', 'ar', 'hi']:
             logger.info(f"Translating from {lang_code} to English...")
             try:
                 translation_result = translate.translate_text(
@@ -127,10 +145,11 @@ def handler(event, context):
         try:
             sentiment_result = comprehend.detect_sentiment(Text=translated_text, LanguageCode="en")
             sentiment = sentiment_result['Sentiment']
-            logger.info(f"Detected sentiment: {sentiment}")
+            sentiment_scores = sentiment_result.get('SentimentScore', {})
+            logger.info(f"Detected sentiment: {sentiment}, scores: {sentiment_scores}")
         except Exception as e:
             logger.error(f"Sentiment analysis failed: {str(e)}")
-            sentiment = "NEUTRAL"  # Default sentiment
+            sentiment = "NEUTRAL"
 
         # Get reply from Cohere
         logger.info("Generating response from Cohere...")
@@ -144,22 +163,44 @@ def handler(event, context):
         # Convert to audio via Polly
         logger.info("Converting response to audio...")
         try:
-            polly_audio = polly.synthesize_speech(
-                Text=reply,
+            # Use SSML for better speech quality
+            ssml_text = f"<speak><prosody rate='medium' pitch='medium'>{reply}</prosody></speak>"
+            
+            polly_response = polly.synthesize_speech(
+                Text=ssml_text,
+                TextType='ssml',
                 OutputFormat="mp3",
-                VoiceId="Joanna"
+                VoiceId="Joanna",
+                Engine='neural'  # Use neural engine for better quality
             )
-            audio_stream = polly_audio["AudioStream"].read()
+            audio_stream = polly_response["AudioStream"].read()
             audio_base64 = base64.b64encode(audio_stream).decode()
             logger.info(f"Audio response generated, size: {len(audio_base64)} characters")
         except Exception as e:
             logger.error(f"Audio synthesis failed: {str(e)}")
-            return _response(500, "Failed to generate audio response")
+            # Fallback to standard engine
+            try:
+                polly_response = polly.synthesize_speech(
+                    Text=reply,
+                    OutputFormat="mp3",
+                    VoiceId="Joanna"
+                )
+                audio_stream = polly_response["AudioStream"].read()
+                audio_base64 = base64.b64encode(audio_stream).decode()
+                logger.info(f"Audio response generated with fallback, size: {len(audio_base64)} characters")
+            except Exception as e2:
+                logger.error(f"Fallback audio synthesis also failed: {str(e2)}")
+                return _response(500, "Failed to generate audio response")
 
         return {
             "statusCode": 200,
             "isBase64Encoded": True,
-            "headers": {"Content-Type": "audio/mpeg"},
+            "headers": {
+                "Content-Type": "audio/mpeg",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Methods": "POST, OPTIONS"
+            },
             "body": audio_base64
         }
 
@@ -176,10 +217,77 @@ def handler(event, context):
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary file: {str(e)}")
 
+def _is_valid_wav(audio_bytes):
+    """Validate that the audio data is a proper WAV file"""
+    try:
+        if len(audio_bytes) < 44:
+            return False
+        
+        # Check RIFF header
+        if audio_bytes[:4] != b'RIFF':
+            logger.error("Missing RIFF header")
+            return False
+        
+        # Check WAVE format
+        if audio_bytes[8:12] != b'WAVE':
+            logger.error("Missing WAVE format identifier")
+            return False
+        
+        # Check fmt chunk
+        if audio_bytes[12:16] != b'fmt ':
+            logger.error("Missing fmt chunk")
+            return False
+        
+        return True
+    except Exception as e:
+        logger.error(f"WAV validation error: {str(e)}")
+        return False
+
+def _log_wav_properties(audio_bytes):
+    """Log properties of the WAV file for debugging"""
+    try:
+        if len(audio_bytes) < 44:
+            return
+        
+        # Parse WAV header
+        file_size = struct.unpack('<I', audio_bytes[4:8])[0]
+        fmt_chunk_size = struct.unpack('<I', audio_bytes[16:20])[0]
+        audio_format = struct.unpack('<H', audio_bytes[20:22])[0]
+        num_channels = struct.unpack('<H', audio_bytes[22:24])[0]
+        sample_rate = struct.unpack('<I', audio_bytes[24:28])[0]
+        byte_rate = struct.unpack('<I', audio_bytes[28:32])[0]
+        block_align = struct.unpack('<H', audio_bytes[32:34])[0]
+        bits_per_sample = struct.unpack('<H', audio_bytes[34:36])[0]
+        
+        logger.info(f"WAV Properties:")
+        logger.info(f"  File size: {file_size} bytes")
+        logger.info(f"  Audio format: {audio_format} (1=PCM)")
+        logger.info(f"  Channels: {num_channels}")
+        logger.info(f"  Sample rate: {sample_rate} Hz")
+        logger.info(f"  Byte rate: {byte_rate}")
+        logger.info(f"  Block align: {block_align}")
+        logger.info(f"  Bits per sample: {bits_per_sample}")
+        
+        # Find data chunk
+        offset = 36
+        while offset < len(audio_bytes) - 8:
+            chunk_id = audio_bytes[offset:offset+4]
+            chunk_size = struct.unpack('<I', audio_bytes[offset+4:offset+8])[0]
+            
+            if chunk_id == b'data':
+                logger.info(f"  Data chunk size: {chunk_size} bytes")
+                duration = chunk_size / byte_rate if byte_rate > 0 else 0
+                logger.info(f"  Estimated duration: {duration:.2f} seconds")
+                break
+            
+            offset += 8 + chunk_size
+        
+    except Exception as e:
+        logger.warning(f"Could not parse WAV properties: {str(e)}")
+
 def _upload_and_transcribe(audio_path, job_name):
     try:
         bucket = TRANSCRIBE_BUCKET
-        # Use .wav extension for the S3 key
         key = f"uploads/{uuid.uuid4()}.wav"
         
         logger.info(f"Uploading to S3: s3://{bucket}/{key}")
@@ -188,17 +296,25 @@ def _upload_and_transcribe(audio_path, job_name):
         job_uri = f"s3://{bucket}/{key}"
         logger.info(f"Starting transcription job with URI: {job_uri}")
         
-        # Updated transcription job with auto language detection and proper media format
-        transcribe.start_transcription_job(
-            TranscriptionJobName=job_name,
-            Media={"MediaFileUri": job_uri},
-            MediaFormat="wav",  # Changed from webm to wav
-            IdentifyLanguage=True,  # Let AWS auto-detect language
-            # Removed LanguageCode since we're using IdentifyLanguage
-            OutputBucketName=bucket
-        )
-
+        # Configure transcription job for optimal results
+        job_config = {
+            'TranscriptionJobName': job_name,
+            'Media': {'MediaFileUri': job_uri},
+            'MediaFormat': 'wav',
+            'LanguageCode': 'en-US',  # Start with English, can be changed if needed
+            'Settings': {
+                'ShowSpeakerLabels': False,
+                'MaxSpeakerLabels': 1,
+                'ChannelIdentification': False,
+                'ShowAlternatives': False,
+                'MaxAlternatives': 1,
+                'VocabularyFilterMethod': 'remove'
+            }
+        }
+        
+        transcribe.start_transcription_job(**job_config)
         return job_uri
+        
     except Exception as e:
         logger.error(f"Upload and transcribe failed: {str(e)}", exc_info=True)
         return None
@@ -272,5 +388,10 @@ def _response(status, message):
     return {
         "statusCode": status,
         "body": json.dumps({"message": message}),
-        "headers": {"Content-Type": "application/json"}
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Methods": "POST, OPTIONS"
+        }
     }
