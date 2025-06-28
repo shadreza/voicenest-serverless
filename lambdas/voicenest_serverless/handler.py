@@ -13,7 +13,7 @@ comprehend = boto3.client('comprehend')
 translate = boto3.client('translate')
 polly = boto3.client('polly')
 
-COHERE_API_KEY = os.environ.get("PROD_COHERE_API_KEY")  # stored as Lambda env variable
+COHERE_API_KEY = os.environ.get("PROD_COHERE_API_KEY")
 
 def handler(event, context):
     # Parse and save incoming audio
