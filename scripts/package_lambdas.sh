@@ -2,7 +2,7 @@
 set -euo pipefail
 
 LAMBDA_NAME="voicenest_serverless"
-LAMBDA_FUNCTION_NAME="${LAMBDA_NAME}-lambda"
+LAMBDA_FUNCTION_NAME="voicenest-serverless-lambda"
 SRC_DIR="./lambdas/$LAMBDA_NAME"
 DIST_DIR="./dist"
 ZIP_NAME="voicenest_lambda.zip"
