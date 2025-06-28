@@ -62,9 +62,15 @@ def handler(event, context):
         
         logger.info(f"Audio data size: {len(audio_bytes)} bytes")
         
-        # Save audio to temporary file
+        # Validate audio data size (minimum check)
+        if len(audio_bytes) < 1000:  # Less than 1KB is likely invalid
+            logger.error(f"Audio data too small: {len(audio_bytes)} bytes")
+            return _response(400, "Audio data appears to be invalid or too small")
+        
+        # Save audio to temporary file with proper extension
         try:
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_audio:
+            # Use .wav extension instead of .webm for better compatibility
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
                 tmp_audio.write(audio_bytes)
                 tmp_audio_path = tmp_audio.name
             logger.info(f"Audio saved to temporary file: {tmp_audio_path}")
@@ -173,7 +179,8 @@ def handler(event, context):
 def _upload_and_transcribe(audio_path, job_name):
     try:
         bucket = TRANSCRIBE_BUCKET
-        key = f"uploads/{uuid.uuid4()}.webm"
+        # Use .wav extension for the S3 key
+        key = f"uploads/{uuid.uuid4()}.wav"
         
         logger.info(f"Uploading to S3: s3://{bucket}/{key}")
         s3.upload_file(audio_path, bucket, key)
@@ -181,11 +188,13 @@ def _upload_and_transcribe(audio_path, job_name):
         job_uri = f"s3://{bucket}/{key}"
         logger.info(f"Starting transcription job with URI: {job_uri}")
         
+        # Updated transcription job with auto language detection and proper media format
         transcribe.start_transcription_job(
             TranscriptionJobName=job_name,
             Media={"MediaFileUri": job_uri},
-            MediaFormat="webm",
-            LanguageCode="en-US",  # You might want to make this auto-detect
+            MediaFormat="wav",  # Changed from webm to wav
+            IdentifyLanguage=True,  # Let AWS auto-detect language
+            # Removed LanguageCode since we're using IdentifyLanguage
             OutputBucketName=bucket
         )
 
@@ -236,7 +245,7 @@ def _cohere_generate_reply(text, sentiment):
     try:
         payload = {
             "model": "command-r-plus",
-            "prompt": f"You are a compassionate listener. The user said: \"{text}\" (Sentiment: {sentiment}). Respond with empathy.",
+            "prompt": f"You are a compassionate listener. The user said: \"{text}\" (Sentiment: {sentiment}). Respond with empathy and keep your response under 100 words.",
             "max_tokens": 150,
             "temperature": 0.7
         }
@@ -257,7 +266,7 @@ def _cohere_generate_reply(text, sentiment):
         
     except Exception as e:
         logger.error(f"Cohere API call failed: {str(e)}", exc_info=True)
-        return None
+        return "I understand you're sharing something important with me. Thank you for trusting me with your thoughts."
 
 def _response(status, message):
     return {
