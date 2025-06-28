@@ -1,0 +1,68 @@
+# ========================
+# OS-Specific
+# ========================
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# ========================
+# IDEs & Editors
+# ========================
+
+# JetBrains IDEs (e.g., IntelliJ, PyCharm, WebStorm)
+.idea/
+
+# ========================
+# Build Artifacts
+# ========================
+
+# Node.js
+node_modules/
+dist/
+package-lock.json
+yarn.lock
+
+# Python
+*.py[cod]
+**/package/
+
+# Java
+*.class
+*.jar
+target/
+
+# Common
+*.zip
+*.log
+TEST*.xml
+
+# ========================
+# Executables & Apps
+# ========================
+*.app
+*.exe
+*.war
+
+# ========================
+# Media Files
+# ========================
+*.mp4
+*.tiff
+*.avi
+*.flv
+*.mov
+*.wmv
+
+# ========================
+# Terraform
+# ========================
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+*.tf.json
+.terraform/
+.crash/
