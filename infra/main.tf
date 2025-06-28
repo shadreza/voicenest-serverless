@@ -1,11 +1,11 @@
 terraform {
-  backend "s3" {
-    bucket         = "voicenest-serverless-tf-state"
-    key            = "tf-infra/terraform.tfstate"
-    region         = "ap-south-1"
-    dynamodb_table = "voicenest-serverless-tf-state-locking"
-    encrypt        = true
-  }
+  # backend "s3" {
+  #   bucket         = "voicenest-serverless-tf-state"
+  #   key            = "tf-infra/terraform.tfstate"
+  #   region         = "ap-south-1"
+  #   dynamodb_table = "voicenest-serverless-tf-state-locking"
+  #   encrypt        = true
+  # }
 
   required_providers {
     aws = {
@@ -70,6 +70,29 @@ resource "aws_s3_bucket_versioning" "transcribe_audio" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+# Lambda IAM Role
+resource "aws_iam_role" "lambda_exec" {
+  name = "${var.project_name}-lambda-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        },
+        Effect = "Allow",
+        Sid    = ""
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_transcribe" {
@@ -206,76 +229,6 @@ resource "aws_iam_role_policy_attachment" "codepipeline_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
-# VPC and Networking (no NAT Gateway or EIP to stay within free tier)
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  tags = {
-    Name = "${var.project_name}-vpc"
-  }
-}
-
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
-  tags = {
-    Name = "${var.project_name}-igw"
-  }
-}
-
-resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = "ap-south-1a"
-  tags = {
-    Name = "${var.project_name}-public"
-  }
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-  tags = {
-    Name = "${var.project_name}-public-rt"
-  }
-}
-
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
-}
-
-# Lambda IAM Role
-resource "aws_iam_role" "lambda_exec" {
-  name = "${var.project_name}-lambda-exec"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Action = "sts:AssumeRole",
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        },
-        Effect = "Allow",
-        Sid    = ""
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
 # Lambda Deployment Package from S3
 resource "aws_s3_bucket" "lambda_deploy" {
   bucket        = "${var.project_name}-lambda-deploy"
@@ -285,6 +238,7 @@ resource "aws_s3_bucket" "lambda_deploy" {
   }
 }
 
+# Lambda Function (Outside VPC)
 resource "aws_lambda_function" "voicenest" {
   function_name = "${var.project_name}-lambda"
   handler       = "handler.handler"
@@ -295,40 +249,13 @@ resource "aws_lambda_function" "voicenest" {
   timeout       = 900
   memory_size   = 512
 
-  vpc_config {
-    subnet_ids         = [aws_subnet.public.id]
-    security_group_ids = [aws_security_group.lambda_sg.id]
-  }
-
   environment {
     variables = var.lambda_env_vars
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.lambda_basic,
-    aws_iam_role_policy_attachment.lambda_vpc
+    aws_iam_role_policy_attachment.lambda_basic
   ]
-}
-
-# Security Group for Lambda
-resource "aws_security_group" "lambda_sg" {
-  name        = "${var.project_name}-lambda-sg"
-  description = "Allow Lambda to connect outbound"
-  vpc_id      = aws_vpc.main.id
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 }
 
 # API Gateway (HTTP API)
@@ -374,4 +301,13 @@ resource "aws_lambda_permission" "allow_apigw" {
   function_name = aws_lambda_function.voicenest.arn
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# Outputs
+output "api_gateway_url" {
+  value = aws_apigatewayv2_api.http_api.api_endpoint
+}
+
+output "lambda_function_name" {
+  value = aws_lambda_function.voicenest.function_name
 }
