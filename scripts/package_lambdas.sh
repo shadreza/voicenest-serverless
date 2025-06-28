@@ -2,6 +2,7 @@
 set -euo pipefail
 
 LAMBDA_NAME="voicenest_serverless"
+LAMBDA_FUNCTION_NAME="${LAMBDA_NAME}-lambda"
 SRC_DIR="./lambdas/$LAMBDA_NAME"
 DIST_DIR="./dist"
 ZIP_NAME="voicenest_lambda.zip"
@@ -23,6 +24,16 @@ cd - > /dev/null
 
 echo "[*] Uploading Lambda zip to S3..."
 aws s3 cp "$ZIP_PATH" "s3://${LAMBDA_BUCKET}/${ZIP_NAME}"
+
+echo "[*] Updating Lambda function..."
+if aws lambda update-function-code \
+  --function-name "$LAMBDA_FUNCTION_NAME" \
+  --s3-bucket "$LAMBDA_BUCKET" \
+  --s3-key "$ZIP_NAME"; then
+  echo "[✓] Lambda function updated."
+else
+  echo "[!] Lambda function update failed."
+fi
 
 echo "[*] Generating Lambda environment variables from SSM..."
 rm -rf scripts/package
