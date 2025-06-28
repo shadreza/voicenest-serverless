@@ -1,11 +1,11 @@
 terraform {
-  # backend "s3" {
-  #   bucket         = "voicenest-serverless-tf-state"
-  #   key            = "tf-infra/terraform.tfstate"
-  #   region         = "ap-south-1"
-  #   dynamodb_table = "tf-state-locking"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "voicenest-serverless-tf-state"
+    key            = "tf-infra/terraform.tfstate"
+    region         = "ap-south-1"
+    dynamodb_table = "tf-state-locking"
+    encrypt        = true
+  }
 
   required_providers {
     aws = {
