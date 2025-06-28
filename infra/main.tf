@@ -57,15 +57,55 @@ resource "aws_dynamodb_table" "tf_locks" {
 
 data "aws_caller_identity" "current" {}
 
+resource "aws_s3_bucket" "transcribe_audio" {
+  bucket        = "voicenest-transcribe-audio"
+  force_destroy = true
+  tags = {
+    Name = "Voicenest Transcribe Audio"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "transcribe_audio" {
+  bucket = aws_s3_bucket.transcribe_audio.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_transcribe" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonTranscribeFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_s3" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_polly" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonPollyFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_comprehend" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/ComprehendFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_translate" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/TranslateFullAccess"
+}
+
 resource "aws_codestarconnections_connection" "github" {
   name          = "voicenest-github-connection"
   provider_type = "GitHub"
 }
 
 resource "aws_codebuild_project" "voicenest_build" {
-  name          = "${var.project_name}-build"
-  description   = "Build Lambda and deploy infrastructure."
-  service_role  = aws_iam_role.codebuild.arn
+  name         = "${var.project_name}-build"
+  description  = "Build Lambda and deploy infrastructure."
+  service_role = aws_iam_role.codebuild.arn
 
   source {
     type            = "GITHUB"
@@ -79,10 +119,10 @@ resource "aws_codebuild_project" "voicenest_build" {
   }
 
   environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/standard:7.0"
-    type                        = "LINUX_CONTAINER"
-    privileged_mode             = true
+    compute_type    = "BUILD_GENERAL1_SMALL"
+    image           = "aws/codebuild/standard:7.0"
+    type            = "LINUX_CONTAINER"
+    privileged_mode = true
   }
 
   source_version = "master"
@@ -108,9 +148,9 @@ resource "aws_codepipeline" "voicenest_pipeline" {
       output_artifacts = ["source_output"]
 
       configuration = {
-        ConnectionArn = aws_codestarconnections_connection.github.arn
+        ConnectionArn    = aws_codestarconnections_connection.github.arn
         FullRepositoryId = "shadreza/voicenest-serverless"
-        BranchName = "master"
+        BranchName       = "master"
       }
     }
   }
@@ -137,9 +177,9 @@ resource "aws_iam_role" "codebuild" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Effect = "Allow",
+      Effect    = "Allow",
       Principal = { Service = "codebuild.amazonaws.com" },
-      Action = "sts:AssumeRole"
+      Action    = "sts:AssumeRole"
     }]
   })
 }
@@ -154,9 +194,9 @@ resource "aws_iam_role" "codepipeline" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Effect = "Allow",
+      Effect    = "Allow",
       Principal = { Service = "codepipeline.amazonaws.com" },
-      Action = "sts:AssumeRole"
+      Action    = "sts:AssumeRole"
     }]
   })
 }

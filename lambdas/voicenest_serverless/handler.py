@@ -4,6 +4,8 @@ import os
 import tempfile
 import uuid
 import requests
+import base64
+import time
 
 s3 = boto3.client('s3')
 transcribe = boto3.client('transcribe')
@@ -74,7 +76,7 @@ def handler(event, context):
     }
 
 def _upload_and_transcribe(audio_path, job_name):
-    bucket = os.environ.get("TRANSCRIBE_BUCKET")
+    bucket = os.environ.get("PROD_TRANSCRIBE_BUCKET")
     key = f"uploads/{uuid.uuid4()}.webm"
     s3.upload_file(audio_path, bucket, key)
 
