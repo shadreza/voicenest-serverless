@@ -335,6 +335,17 @@ resource "aws_security_group" "lambda_sg" {
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "${var.project_name}-api"
   protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_origins = [
+      "http://localhost:3000",
+      "https://voicenest-app.vercel.app"
+    ]
+    allow_methods  = ["POST", "OPTIONS"]
+    allow_headers  = ["Content-Type"]
+    expose_headers = ["Content-Type"]
+    max_age        = 3600
+  }
 }
 
 resource "aws_apigatewayv2_stage" "default" {
