@@ -13,13 +13,20 @@ echo "[*] Cleaning dist folder..."
 mkdir -p "$DIST_DIR"
 rm -f "$ZIP_PATH"
 
-echo "[*] Installing Lambda dependencies..."
-rm -rf "$SRC_DIR/python"
-pip install -r "$SRC_DIR/requirements.txt" -t "$SRC_DIR/python"
+echo "[*] Creating temporary build directory..."
+BUILD_DIR="$DIST_DIR/lambda_build"
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+echo "[*] Copying handler.py to build directory..."
+cp "$SRC_DIR/handler.py" "$BUILD_DIR/"
+
+echo "[*] Installing Lambda dependencies directly to build directory..."
+pip install -r "$SRC_DIR/requirements.txt" -t "$BUILD_DIR"
 
 echo "[*] Creating deployment package..."
-cd "$SRC_DIR"
-zip -r "../../$ZIP_PATH" handler.py python/
+cd "$BUILD_DIR"
+zip -r "../$ZIP_NAME" .
 cd - > /dev/null
 
 echo "[*] Uploading Lambda zip to S3..."
@@ -41,7 +48,7 @@ pip install -r scripts/requirements.txt --target scripts/package
 PYTHONPATH=scripts/package python3 scripts/generate_lambda_env_vars_from_ssm.py > infra/lambda_env_vars.tf.json
 
 echo "[*] Cleaning up temporary directories..."
-rm -rf "$SRC_DIR/python"
+rm -rf "$BUILD_DIR"
 rm -rf scripts/package
 
 echo "[✓] Lambda packaged, uploaded to S3, and env vars written to infra/lambda_env_vars.tf.json"
