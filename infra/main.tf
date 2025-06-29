@@ -247,7 +247,7 @@ resource "aws_lambda_function" "voicenest" {
   s3_bucket     = aws_s3_bucket.lambda_deploy.bucket
   s3_key        = "voicenest_lambda.zip"
   timeout       = 900
-  memory_size   = 512
+  memory_size   = 256
 
   environment {
     variables = var.lambda_env_vars
