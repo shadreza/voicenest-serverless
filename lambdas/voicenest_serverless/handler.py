@@ -159,7 +159,8 @@ def handler(event, context):
                 "Content-Type": "audio/mpeg",
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Headers": "Content-Type",
-                "Access-Control-Allow-Methods": "POST, OPTIONS"
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "x-language": lang_code
             },
             "body": audio_base64
         }
