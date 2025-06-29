@@ -160,6 +160,7 @@ def handler(event, context):
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Headers": "Content-Type",
                 "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Expose-Headers": "x-language",
                 "x-language": lang_code
             },
             "body": audio_base64
