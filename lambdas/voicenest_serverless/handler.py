@@ -8,6 +8,9 @@ import base64
 import time
 import logging
 import struct
+import email
+from email.mime.multipart import MIMEMultipart
+from io import BytesIO
 
 # Configure logging
 logger = logging.getLogger()
@@ -27,7 +30,7 @@ def handler(event, context):
     tmp_audio_path = None
     
     try:
-        logger.info(f"Event received: {json.dumps(event, default=str)}")
+        logger.info(f"Event headers: {json.dumps(event.get('headers', {}), default=str)}")
         
         # Validate environment variables
         if not COHERE_API_KEY:
@@ -38,29 +41,50 @@ def handler(event, context):
             logger.error("TRANSCRIBE_BUCKET not found in environment variables")
             return _response(500, "Missing bucket configuration")
         
-        # Parse and save incoming audio
+        # Parse audio data
         logger.info("Parsing audio data...")
         body = event.get("body")
+        headers = event.get("headers", {})
+        
+        # Get content type (case-insensitive)
+        content_type = ""
+        for key, value in headers.items():
+            if key.lower() == "content-type":
+                content_type = value
+                break
+        
         if not body:
             logger.error("No body found in request")
             return _response(400, "Missing audio data")
         
         is_base64 = event.get("isBase64Encoded", False)
-        logger.info(f"Audio is base64 encoded: {is_base64}")
+        logger.info(f"Content-Type: {content_type}")
+        logger.info(f"Is base64 encoded: {is_base64}")
         
         try:
-            if is_base64:
-                audio_bytes = base64.b64decode(body)
+            if "multipart/form-data" in content_type:
+                # Handle FormData
+                logger.info("Processing multipart/form-data")
+                audio_bytes = parse_multipart_data(body, content_type)
+                if not audio_bytes:
+                    logger.error("Failed to extract audio from multipart data")
+                    return _response(400, "Failed to extract audio data")
             else:
-                # Try to decode as base64 anyway (API Gateway might not set the flag correctly)
-                try:
+                # Handle direct binary/base64 data
+                if is_base64:
                     audio_bytes = base64.b64decode(body)
-                    logger.info("Successfully decoded body as base64 despite flag being False")
-                except:
-                    if isinstance(body, str):
-                        audio_bytes = body.encode()
-                    else:
-                        audio_bytes = body
+                    logger.info("Decoded base64 audio data")
+                else:
+                    # Try to decode as base64 anyway (API Gateway might encode it)
+                    try:
+                        audio_bytes = base64.b64decode(body)
+                        logger.info("Successfully decoded body as base64 despite flag being False")
+                    except:
+                        if isinstance(body, str):
+                            audio_bytes = body.encode()
+                        else:
+                            audio_bytes = body
+                        logger.info("Used body as raw bytes")
         except Exception as e:
             logger.error(f"Failed to decode audio data: {str(e)}")
             return _response(400, "Invalid audio data format")
@@ -68,21 +92,17 @@ def handler(event, context):
         logger.info(f"Audio data size: {len(audio_bytes)} bytes")
         
         # Validate audio data size
-        if len(audio_bytes) < 1000:
+        if len(audio_bytes) < 100:  # Reduced threshold for various formats
             logger.error(f"Audio data too small: {len(audio_bytes)} bytes")
             return _response(400, "Audio data appears to be invalid or too small")
         
-        # Validate WAV file format
-        if not _is_valid_wav(audio_bytes):
-            logger.error("Invalid WAV file format")
-            return _response(400, "Invalid WAV file format")
-        
-        # Log WAV file properties
-        _log_wav_properties(audio_bytes)
+        # Determine file format and extension
+        file_extension, media_format = _detect_audio_format(audio_bytes, content_type)
+        logger.info(f"Detected format: {media_format}, using extension: {file_extension}")
         
         # Save audio to temporary file
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
+            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as tmp_audio:
                 tmp_audio.write(audio_bytes)
                 tmp_audio_path = tmp_audio.name
             logger.info(f"Audio saved to temporary file: {tmp_audio_path}")
@@ -94,7 +114,7 @@ def handler(event, context):
         job_name = f"voicenest-job-{uuid.uuid4()}"
         logger.info(f"Starting transcription job: {job_name}")
         
-        transcribe_uri = _upload_and_transcribe(tmp_audio_path, job_name)
+        transcribe_uri = _upload_and_transcribe(tmp_audio_path, job_name, media_format)
         if not transcribe_uri:
             logger.error("Transcription upload failed")
             return _response(500, "Transcription failed")
@@ -217,78 +237,80 @@ def handler(event, context):
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary file: {str(e)}")
 
-def _is_valid_wav(audio_bytes):
-    """Validate that the audio data is a proper WAV file"""
+def parse_multipart_data(body, content_type):
+    """Parse multipart/form-data from API Gateway"""
     try:
-        if len(audio_bytes) < 44:
-            return False
+        # Extract boundary from content-type
+        boundary = None
+        if 'boundary=' in content_type:
+            boundary = content_type.split('boundary=')[1].strip()
         
-        # Check RIFF header
-        if audio_bytes[:4] != b'RIFF':
-            logger.error("Missing RIFF header")
-            return False
+        if not boundary:
+            logger.error("No boundary found in content-type")
+            return None
         
-        # Check WAVE format
-        if audio_bytes[8:12] != b'WAVE':
-            logger.error("Missing WAVE format identifier")
-            return False
+        # Parse the multipart data
+        body_bytes = base64.b64decode(body) if isinstance(body, str) else body
         
-        # Check fmt chunk
-        if audio_bytes[12:16] != b'fmt ':
-            logger.error("Missing fmt chunk")
-            return False
+        # Create a proper multipart message
+        multipart_data = b'Content-Type: ' + content_type.encode() + b'\r\n\r\n' + body_bytes
         
-        return True
+        # Parse using email library
+        msg = email.message_from_bytes(multipart_data)
+        
+        for part in msg.walk():
+            if part.get_content_disposition() == 'form-data':
+                if part.get_param('name', header='content-disposition') == 'audio':
+                    return part.get_payload(decode=True)
+        
+        return None
     except Exception as e:
-        logger.error(f"WAV validation error: {str(e)}")
-        return False
+        logger.error(f"Failed to parse multipart data: {str(e)}")
+        return None
 
-def _log_wav_properties(audio_bytes):
-    """Log properties of the WAV file for debugging"""
+def _detect_audio_format(audio_bytes, content_type):
+    """Detect audio format and return appropriate extension and media format"""
     try:
-        if len(audio_bytes) < 44:
-            return
+        # Check file signature first
+        if len(audio_bytes) >= 12:
+            if audio_bytes[:4] == b'RIFF' and audio_bytes[8:12] == b'WAVE':
+                logger.info("Detected WAV format from file signature")
+                return '.wav', 'wav'
+            elif audio_bytes[:4] == b'OggS':
+                logger.info("Detected OGG format from file signature")
+                return '.ogg', 'ogg'
+            elif audio_bytes[:3] == b'ID3' or audio_bytes[:2] == b'\xff\xfb':
+                logger.info("Detected MP3 format from file signature")
+                return '.mp3', 'mp3'
         
-        # Parse WAV header
-        file_size = struct.unpack('<I', audio_bytes[4:8])[0]
-        fmt_chunk_size = struct.unpack('<I', audio_bytes[16:20])[0]
-        audio_format = struct.unpack('<H', audio_bytes[20:22])[0]
-        num_channels = struct.unpack('<H', audio_bytes[22:24])[0]
-        sample_rate = struct.unpack('<I', audio_bytes[24:28])[0]
-        byte_rate = struct.unpack('<I', audio_bytes[28:32])[0]
-        block_align = struct.unpack('<H', audio_bytes[32:34])[0]
-        bits_per_sample = struct.unpack('<H', audio_bytes[34:36])[0]
+        # Check WebM format (more complex, just look for content-type)
+        if content_type and 'webm' in content_type.lower():
+            logger.info("Detected WebM format from content-type")
+            return '.webm', 'webm'
         
-        logger.info(f"WAV Properties:")
-        logger.info(f"  File size: {file_size} bytes")
-        logger.info(f"  Audio format: {audio_format} (1=PCM)")
-        logger.info(f"  Channels: {num_channels}")
-        logger.info(f"  Sample rate: {sample_rate} Hz")
-        logger.info(f"  Byte rate: {byte_rate}")
-        logger.info(f"  Block align: {block_align}")
-        logger.info(f"  Bits per sample: {bits_per_sample}")
+        # Default based on content-type
+        if content_type:
+            if 'wav' in content_type.lower():
+                return '.wav', 'wav'
+            elif 'ogg' in content_type.lower():
+                return '.ogg', 'ogg'
+            elif 'mp3' in content_type.lower():
+                return '.mp3', 'mp3'
+            elif 'webm' in content_type.lower():
+                return '.webm', 'webm'
         
-        # Find data chunk
-        offset = 36
-        while offset < len(audio_bytes) - 8:
-            chunk_id = audio_bytes[offset:offset+4]
-            chunk_size = struct.unpack('<I', audio_bytes[offset+4:offset+8])[0]
-            
-            if chunk_id == b'data':
-                logger.info(f"  Data chunk size: {chunk_size} bytes")
-                duration = chunk_size / byte_rate if byte_rate > 0 else 0
-                logger.info(f"  Estimated duration: {duration:.2f} seconds")
-                break
-            
-            offset += 8 + chunk_size
+        # Default to webm (common for web recordings)
+        logger.info("Using default WebM format")
+        return '.webm', 'webm'
         
     except Exception as e:
-        logger.warning(f"Could not parse WAV properties: {str(e)}")
+        logger.warning(f"Error detecting audio format: {str(e)}")
+        return '.webm', 'webm'
 
-def _upload_and_transcribe(audio_path, job_name):
+def _upload_and_transcribe(audio_path, job_name, media_format):
     try:
         bucket = TRANSCRIBE_BUCKET
-        key = f"uploads/{uuid.uuid4()}.wav"
+        key = f"uploads/{job_name}{os.path.splitext(audio_path)[1]}"
         
         logger.info(f"Uploading to S3: s3://{bucket}/{key}")
         s3.upload_file(audio_path, bucket, key)
@@ -300,15 +322,14 @@ def _upload_and_transcribe(audio_path, job_name):
         job_config = {
             'TranscriptionJobName': job_name,
             'Media': {'MediaFileUri': job_uri},
-            'MediaFormat': 'wav',
+            'MediaFormat': media_format,
             'LanguageCode': 'en-US',  # Start with English, can be changed if needed
             'Settings': {
                 'ShowSpeakerLabels': False,
                 'MaxSpeakerLabels': 1,
                 'ChannelIdentification': False,
                 'ShowAlternatives': False,
-                'MaxAlternatives': 1,
-                'VocabularyFilterMethod': 'remove'
+                'MaxAlternatives': 1
             }
         }
         
