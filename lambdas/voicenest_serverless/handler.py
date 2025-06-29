@@ -182,35 +182,70 @@ def handler(event, context):
 
         # Convert to audio via Polly
         logger.info("Converting response to audio...")
-        try:
-            # Use SSML for better speech quality
-            ssml_text = f"<speak><prosody rate='medium' pitch='medium'>{reply}</prosody></speak>"
-            
-            polly_response = polly.synthesize_speech(
-                Text=ssml_text,
-                TextType='ssml',
-                OutputFormat="mp3",
-                VoiceId="Joanna",
-                Engine='neural'  # Use neural engine for better quality
-            )
-            audio_stream = polly_response["AudioStream"].read()
-            audio_base64 = base64.b64encode(audio_stream).decode()
-            logger.info(f"Audio response generated, size: {len(audio_base64)} characters")
-        except Exception as e:
-            logger.error(f"Audio synthesis failed: {str(e)}")
-            # Fallback to standard engine
+
+        # Define voice options (neural voices that work well)
+        voice_options = [
+            {"VoiceId": "Joanna", "Engine": "neural"},
+            {"VoiceId": "Matthew", "Engine": "neural"},
+            {"VoiceId": "Ruth", "Engine": "neural"},
+            {"VoiceId": "Joanna", "Engine": "standard"},
+            {"VoiceId": "Matthew", "Engine": "standard"}
+        ]
+
+        audio_base64 = None
+        synthesis_success = False
+
+        for voice_config in voice_options:
             try:
-                polly_response = polly.synthesize_speech(
-                    Text=reply,
-                    OutputFormat="mp3",
-                    VoiceId="Joanna"
-                )
+                logger.info(f"Trying voice: {voice_config['VoiceId']} with {voice_config['Engine']} engine")
+                
+                if voice_config['Engine'] == 'neural':
+                    # Neural engine - use plain text only
+                    polly_response = polly.synthesize_speech(
+                        Text=reply,
+                        OutputFormat="mp3",
+                        VoiceId=voice_config['VoiceId'],
+                        Engine=voice_config['Engine']
+                    )
+                else:
+                    # Standard engine - can use SSML
+                    try:
+                        # First try with SSML for better control
+                        ssml_text = f"""<speak>
+                            <prosody rate='medium' pitch='medium'>
+                                {reply.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')}
+                            </prosody>
+                        </speak>"""
+                        
+                        polly_response = polly.synthesize_speech(
+                            Text=ssml_text,
+                            TextType='ssml',
+                            OutputFormat="mp3",
+                            VoiceId=voice_config['VoiceId'],
+                            Engine=voice_config['Engine']
+                        )
+                    except:
+                        # Fallback to plain text for standard engine
+                        polly_response = polly.synthesize_speech(
+                            Text=reply,
+                            OutputFormat="mp3",
+                            VoiceId=voice_config['VoiceId'],
+                            Engine=voice_config['Engine']
+                        )
+                
                 audio_stream = polly_response["AudioStream"].read()
                 audio_base64 = base64.b64encode(audio_stream).decode()
-                logger.info(f"Audio response generated with fallback, size: {len(audio_base64)} characters")
-            except Exception as e2:
-                logger.error(f"Fallback audio synthesis also failed: {str(e2)}")
-                return _response(500, "Failed to generate audio response")
+                synthesis_success = True
+                logger.info(f"Audio synthesis successful with {voice_config['VoiceId']} ({voice_config['Engine']}), size: {len(audio_base64)} characters")
+                break
+                
+            except Exception as e:
+                logger.warning(f"Voice {voice_config['VoiceId']} ({voice_config['Engine']}) failed: {str(e)}")
+                continue
+
+        if not synthesis_success:
+            logger.error("All audio synthesis attempts failed")
+            return _response(500, "Failed to generate audio response")
 
         return {
             "statusCode": 200,
@@ -318,19 +353,12 @@ def _upload_and_transcribe(audio_path, job_name, media_format):
         job_uri = f"s3://{bucket}/{key}"
         logger.info(f"Starting transcription job with URI: {job_uri}")
         
-        # Configure transcription job for optimal results
+        # Minimal configuration - let AWS use defaults
         job_config = {
             'TranscriptionJobName': job_name,
             'Media': {'MediaFileUri': job_uri},
             'MediaFormat': media_format,
-            'LanguageCode': 'en-US',  # Start with English, can be changed if needed
-            'Settings': {
-                'ShowSpeakerLabels': False,
-                'MaxSpeakerLabels': 1,
-                'ChannelIdentification': False,
-                'ShowAlternatives': False,
-                'MaxAlternatives': 1
-            }
+            'LanguageCode': 'en-US'
         }
         
         transcribe.start_transcription_job(**job_config)
