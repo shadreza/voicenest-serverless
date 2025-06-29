@@ -26,115 +26,71 @@ polly = boto3.client('polly')
 COHERE_API_KEY = os.environ.get("PROD_COHERE_API_KEY")
 TRANSCRIBE_BUCKET = os.environ.get("PROD_TRANSCRIBE_BUCKET")
 
+SUPPORTED_POLLY_LANGS = {
+    "en": "Joanna", "es": "Conchita", "fr": "Celine", "de": "Vicki", "it": "Carla",
+    "pt": "Vitoria", "ja": "Mizuki", "ko": "Seoyeon", "zh": "Zhiyu", "ar": "Zeina",
+    "hi": "Aditi", "nl": "Lotte", "sv": "Astrid", "ru": "Tatyana", "tr": "Filiz"
+}
+
+SUPPORTED_TRANSLATE_LANGS = list(SUPPORTED_POLLY_LANGS.keys())
+
 def handler(event, context):
     tmp_audio_path = None
-    
     try:
         logger.info(f"Event headers: {json.dumps(event.get('headers', {}), default=str)}")
-        
-        # Validate environment variables
+
         if not COHERE_API_KEY:
             logger.error("COHERE_API_KEY not found in environment variables")
             return _response(500, "Missing API configuration")
-        
+
         if not TRANSCRIBE_BUCKET:
             logger.error("TRANSCRIBE_BUCKET not found in environment variables")
             return _response(500, "Missing bucket configuration")
-        
-        # Parse audio data
-        logger.info("Parsing audio data...")
+
         body = event.get("body")
         headers = event.get("headers", {})
-        
-        # Get content type (case-insensitive)
-        content_type = ""
-        for key, value in headers.items():
-            if key.lower() == "content-type":
-                content_type = value
-                break
-        
+
+        content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
         if not body:
             logger.error("No body found in request")
             return _response(400, "Missing audio data")
-        
+
         is_base64 = event.get("isBase64Encoded", False)
         logger.info(f"Content-Type: {content_type}")
         logger.info(f"Is base64 encoded: {is_base64}")
-        
+
         try:
             if "multipart/form-data" in content_type:
-                # Handle FormData
                 logger.info("Processing multipart/form-data")
                 audio_bytes = parse_multipart_data(body, content_type)
-                if not audio_bytes:
-                    logger.error("Failed to extract audio from multipart data")
-                    return _response(400, "Failed to extract audio data")
             else:
-                # Handle direct binary/base64 data
-                if is_base64:
-                    audio_bytes = base64.b64decode(body)
-                    logger.info("Decoded base64 audio data")
-                else:
-                    # Try to decode as base64 anyway (API Gateway might encode it)
-                    try:
-                        audio_bytes = base64.b64decode(body)
-                        logger.info("Successfully decoded body as base64 despite flag being False")
-                    except:
-                        if isinstance(body, str):
-                            audio_bytes = body.encode()
-                        else:
-                            audio_bytes = body
-                        logger.info("Used body as raw bytes")
+                audio_bytes = base64.b64decode(body) if is_base64 else body.encode() if isinstance(body, str) else body
         except Exception as e:
             logger.error(f"Failed to decode audio data: {str(e)}")
             return _response(400, "Invalid audio data format")
-        
-        logger.info(f"Audio data size: {len(audio_bytes)} bytes")
-        
-        # Validate audio data size
-        if len(audio_bytes) < 100:  # Reduced threshold for various formats
-            logger.error(f"Audio data too small: {len(audio_bytes)} bytes")
+
+        if not audio_bytes or len(audio_bytes) < 100:
+            logger.error("Audio data appears to be invalid or too small")
             return _response(400, "Audio data appears to be invalid or too small")
-        
-        # Determine file format and extension
+
         file_extension, media_format = _detect_audio_format(audio_bytes, content_type)
         logger.info(f"Detected format: {media_format}, using extension: {file_extension}")
-        
-        # Save audio to temporary file
-        try:
-            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as tmp_audio:
-                tmp_audio.write(audio_bytes)
-                tmp_audio_path = tmp_audio.name
-            logger.info(f"Audio saved to temporary file: {tmp_audio_path}")
-        except Exception as e:
-            logger.error(f"Failed to save audio file: {str(e)}")
-            return _response(500, "Failed to process audio file")
 
-        # Start transcription
+        with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as tmp_audio:
+            tmp_audio.write(audio_bytes)
+            tmp_audio_path = tmp_audio.name
+        logger.info(f"Audio saved to temporary file: {tmp_audio_path}")
+
         job_name = f"voicenest-job-{uuid.uuid4()}"
-        logger.info(f"Starting transcription job: {job_name}")
-        
         transcribe_uri = _upload_and_transcribe(tmp_audio_path, job_name, media_format)
         if not transcribe_uri:
-            logger.error("Transcription upload failed")
             return _response(500, "Transcription failed")
 
-        # Get transcription result
-        logger.info("Waiting for transcription to complete...")
         transcript_text = _get_transcribed_text(job_name)
-        if not transcript_text:
-            logger.error("Could not retrieve transcription result")
-            return _response(500, "Could not retrieve transcription")
-        
+        if not transcript_text.strip():
+            return _response(400, "No speech detected in audio")
         logger.info(f"Transcript: {transcript_text}")
 
-        # Skip empty transcripts
-        if not transcript_text.strip():
-            logger.warning("Transcript is empty")
-            return _response(400, "No speech detected in audio")
-
-        # Detect dominant language
-        logger.info("Detecting language...")
         try:
             lang_detection = comprehend.detect_dominant_language(Text=transcript_text)
             lang_code = lang_detection['Languages'][0]['LanguageCode']
@@ -142,12 +98,10 @@ def handler(event, context):
             logger.info(f"Detected language: {lang_code} (confidence: {confidence:.2f})")
         except Exception as e:
             logger.error(f"Language detection failed: {str(e)}")
-            lang_code = "en"  # Default to English
-        
-        # Translate to English (if needed)
+            lang_code = "en"
+
         translated_text = transcript_text
-        if lang_code != "en" and lang_code in ['es', 'fr', 'de', 'it', 'pt', 'ja', 'ko', 'zh', 'ar', 'hi']:
-            logger.info(f"Translating from {lang_code} to English...")
+        if lang_code != "en" and lang_code in SUPPORTED_TRANSLATE_LANGS:
             try:
                 translation_result = translate.translate_text(
                     Text=transcript_text,
@@ -155,97 +109,48 @@ def handler(event, context):
                     TargetLanguageCode="en"
                 )
                 translated_text = translation_result['TranslatedText']
-                logger.info(f"Translated text: {translated_text}")
+                logger.info(f"Translated to English: {translated_text}")
             except Exception as e:
-                logger.error(f"Translation failed: {str(e)}")
-                # Continue with original text if translation fails
+                logger.warning(f"Translation to English failed: {str(e)}")
 
-        # Analyze sentiment
-        logger.info("Analyzing sentiment...")
         try:
             sentiment_result = comprehend.detect_sentiment(Text=translated_text, LanguageCode="en")
             sentiment = sentiment_result['Sentiment']
-            sentiment_scores = sentiment_result.get('SentimentScore', {})
-            logger.info(f"Detected sentiment: {sentiment}, scores: {sentiment_scores}")
+            logger.info(f"Sentiment: {sentiment}")
         except Exception as e:
             logger.error(f"Sentiment analysis failed: {str(e)}")
             sentiment = "NEUTRAL"
 
-        # Get reply from Cohere
-        logger.info("Generating response from Cohere...")
         reply = _cohere_generate_reply(translated_text, sentiment)
-        if not reply:
-            logger.error("Failed to generate Cohere response")
-            return _response(500, "Failed to generate response")
-        
-        logger.info(f"Cohere response: {reply}")
+        logger.info(f"Cohere reply: {reply}")
 
-        # Convert to audio via Polly
-        logger.info("Converting response to audio...")
-
-        # Define voice options (neural voices that work well)
-        voice_options = [
-            {"VoiceId": "Joanna", "Engine": "neural"},
-            {"VoiceId": "Matthew", "Engine": "neural"},
-            {"VoiceId": "Ruth", "Engine": "neural"},
-            {"VoiceId": "Joanna", "Engine": "standard"},
-            {"VoiceId": "Matthew", "Engine": "standard"}
-        ]
-
-        audio_base64 = None
-        synthesis_success = False
-
-        for voice_config in voice_options:
+        final_reply = reply
+        if lang_code != "en" and lang_code in SUPPORTED_TRANSLATE_LANGS:
             try:
-                logger.info(f"Trying voice: {voice_config['VoiceId']} with {voice_config['Engine']} engine")
-                
-                if voice_config['Engine'] == 'neural':
-                    # Neural engine - use plain text only
-                    polly_response = polly.synthesize_speech(
-                        Text=reply,
-                        OutputFormat="mp3",
-                        VoiceId=voice_config['VoiceId'],
-                        Engine=voice_config['Engine']
-                    )
-                else:
-                    # Standard engine - can use SSML
-                    try:
-                        # First try with SSML for better control
-                        ssml_text = f"""<speak>
-                            <prosody rate='medium' pitch='medium'>
-                                {reply.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')}
-                            </prosody>
-                        </speak>"""
-                        
-                        polly_response = polly.synthesize_speech(
-                            Text=ssml_text,
-                            TextType='ssml',
-                            OutputFormat="mp3",
-                            VoiceId=voice_config['VoiceId'],
-                            Engine=voice_config['Engine']
-                        )
-                    except:
-                        # Fallback to plain text for standard engine
-                        polly_response = polly.synthesize_speech(
-                            Text=reply,
-                            OutputFormat="mp3",
-                            VoiceId=voice_config['VoiceId'],
-                            Engine=voice_config['Engine']
-                        )
-                
-                audio_stream = polly_response["AudioStream"].read()
-                audio_base64 = base64.b64encode(audio_stream).decode()
-                synthesis_success = True
-                logger.info(f"Audio synthesis successful with {voice_config['VoiceId']} ({voice_config['Engine']}), size: {len(audio_base64)} characters")
-                break
-                
+                back_translation = translate.translate_text(
+                    Text=reply,
+                    SourceLanguageCode="en",
+                    TargetLanguageCode=lang_code
+                )
+                final_reply = back_translation['TranslatedText']
+                logger.info(f"Back-translated response: {final_reply}")
             except Exception as e:
-                logger.warning(f"Voice {voice_config['VoiceId']} ({voice_config['Engine']}) failed: {str(e)}")
-                continue
+                logger.warning(f"Back-translation failed: {str(e)}")
 
-        if not synthesis_success:
-            logger.error("All audio synthesis attempts failed")
-            return _response(500, "Failed to generate audio response")
+        voice_id = SUPPORTED_POLLY_LANGS.get(lang_code, "Joanna")
+        try:
+            polly_response = polly.synthesize_speech(
+                Text=final_reply,
+                OutputFormat="mp3",
+                VoiceId=voice_id,
+                Engine="neural" if voice_id in ["Joanna", "Matthew", "Ruth", "Vicki", "Mizuki", "Seoyeon", "Zhiyu"] else "standard"
+            )
+            audio_stream = polly_response["AudioStream"].read()
+            audio_base64 = base64.b64encode(audio_stream).decode()
+            logger.info(f"Polly audio synthesis successful in {lang_code} with voice {voice_id}")
+        except Exception as e:
+            logger.error(f"Polly synthesis failed: {str(e)}")
+            return _response(500, "Audio response generation failed")
 
         return {
             "statusCode": 200,
@@ -262,9 +167,8 @@ def handler(event, context):
     except Exception as e:
         logger.error(f"Unexpected error in handler: {str(e)}", exc_info=True)
         return _response(500, f"Internal server error: {str(e)}")
-    
+
     finally:
-        # Clean up temporary file
         if tmp_audio_path and os.path.exists(tmp_audio_path):
             try:
                 os.unlink(tmp_audio_path)
@@ -353,12 +257,11 @@ def _upload_and_transcribe(audio_path, job_name, media_format):
         job_uri = f"s3://{bucket}/{key}"
         logger.info(f"Starting transcription job with URI: {job_uri}")
         
-        # Minimal configuration - let AWS use defaults
         job_config = {
             'TranscriptionJobName': job_name,
             'Media': {'MediaFileUri': job_uri},
             'MediaFormat': media_format,
-            'LanguageCode': 'en-US'
+            'IdentifyLanguage': True
         }
         
         transcribe.start_transcription_job(**job_config)
