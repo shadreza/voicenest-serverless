@@ -270,7 +270,7 @@ resource "aws_apigatewayv2_api" "http_api" {
     ]
     allow_methods  = ["POST", "OPTIONS"]
     allow_headers  = ["Content-Type"]
-    expose_headers = ["Content-Type"]
+    expose_headers = ["Content-Type", "x-language"]
     max_age        = 3600
   }
 }
