@@ -1,63 +1,86 @@
-# ☁️ VoiceNest Serverless (Backend Infrastructure & Lambda)
+# ☁️ VoiceNest Serverless — Backend for the VoiceNest App
 
-> **Serverless Backbone of the VoiceNest App**
+> **Scalable serverless infrastructure for AI-powered voice companionship.**
 >
-> Terraform-powered AWS infrastructure & AI-driven Lambda function that brings empathetic conversations to life.
+> This backend system powers [VoiceNest](https://voicenest-app.vercel.app), a multilingual, empathetic voice assistant for the elderly — built using AWS Lambda, Terraform, and a suite of AWS AI services.
 
 ---
 
-## 📦 Overview
+## 📖 About the Project
 
-This repository contains the **infrastructure as code (IaC)** and **Lambda codebase** for [VoiceNest](https://voicenest-app.vercel.app), an AI-powered, multilingual voice companion built with AWS services.
+**VoiceNest** addresses a growing issue of **digital loneliness** among elderly individuals. Many find it difficult to use modern technology, yet they crave connection. Our inspiration came from a desire to make empathetic, AI-driven conversations accessible through **nothing more than the human voice** — no apps, no typing.
 
----
+This backend repository implements the **serverless engine** behind VoiceNest. Using **AWS Lambda as the core compute layer**, it processes voice input, understands emotions, and generates spoken responses in over 40 languages — providing companionship through natural conversation.
 
-## ⚙️ Stack
-
-* **Infrastructure**: Terraform (modular)
-* **Cloud Provider**: AWS
-* **Runtime**: AWS Lambda (Python 3.12)
-* **AI & NLP**: Cohere, Amazon Transcribe, Polly, Comprehend, Translate
-* **CI/CD**: AWS CodePipeline + CodeBuild
+Built from scratch during the AWS Lambda Hackathon 2025, the infrastructure and Lambda logic were fully developed during the submission period.
 
 ---
 
-## 🧱 Infrastructure Components
+## 💠 Tech Stack
 
-### 🗂️ Provisioned Resources (via Terraform)
+### 🧑‍💻 Languages & Frameworks
 
-* ✅ S3 buckets (for TF state, audio uploads, Lambda artifacts)
-* ✅ DynamoDB (Terraform state locking)
-* ✅ IAM roles and policies for Lambda, CodeBuild, CodePipeline
-* ✅ Lambda function & API Gateway
-* ✅ CodePipeline (source: GitHub → build → deploy)
+* **Python** — Lambda backend logic
+* **Terraform (HCL)** — Infrastructure as Code
+* **Bash** — Deployment scripting
+
+### ☁️ Cloud Services (AWS)
+
+* **AWS Lambda** — Core compute and orchestration
+* **API Gateway** — RESTful interface for frontend-to-backend communication
+* **Amazon S3** — Stores audio and deployment artifacts
+* **Amazon DynamoDB** — State locking for Terraform
+* **IAM** — Secure role and policy enforcement
+* **SSM Parameter Store** — Secure environment variable storage
+* **CodePipeline + CodeBuild** — Continuous Integration & Deployment
+
+### 🧠 AI & NLP Services
+
+* **Amazon Transcribe** — Converts voice to text
+* **Amazon Comprehend** — Detects language and sentiment
+* **Amazon Translate** — Multilingual support
+* **Amazon Polly** — Converts text to natural speech
+* **Cohere (`command-r-plus`)** — Empathetic AI-generated responses
 
 ---
 
-## 🧠 Lambda Features
+## 🧱 Infrastructure Components (Provisioned via Terraform)
 
-* 📥 Accepts audio (WAV, MP3, WebM, OGG) via `multipart/form-data`
-* 🔊 Transcribes voice input using **Amazon Transcribe**
-* 🌍 Detects spoken language using **Comprehend**
-* 🌐 Translates non-English input to English using **Translate**
-* 💬 Analyzes sentiment of the input
-* 🤖 Generates AI reply with **Cohere's command-r-plus** model
-* 🌐 Translates AI reply back to user's language (if supported)
-* 🔁 Synthesizes speech reply via **Amazon Polly** in original language (fallback to English)
+* ✅ S3 buckets (Terraform state, audio storage, Lambda artifacts)
+* ✅ DynamoDB table (Terraform state locking)
+* ✅ IAM roles and permissions for Lambda & CI/CD
+* ✅ API Gateway (voice endpoint) + Lambda function
+* ✅ CodePipeline & CodeBuild for automated deployment
 
 ---
 
-## 🚀 Deployment Flow
+## 🧠 Lambda Function Overview
 
-1. ✅ Push to `master` branch
-2. 🔄 CodePipeline triggers
-3. 🏗️ CodeBuild:
+The `handler.py` Lambda function orchestrates a multilingual AI pipeline:
 
-   * Packages Lambda code
-   * Uploads zip to S3
-   * Writes env vars from SSM to `lambda_env_vars.tf.json`
-   * Applies Terraform infrastructure
-4. 🔁 Lambda updated & deployed via Terraform
+1. 🎹 Receives audio via API Gateway (form-data)
+2. 📝 Transcribes audio using **Amazon Transcribe**
+3. 🌍 Detects spoken language and sentiment with **Comprehend**
+4. 🌐 Translates non-English input to English (if needed)
+5. 🤖 Generates response using **Cohere** LLM
+6. 🌐 Translates AI response back to the user's native language
+7. 🔊 Synthesizes the reply with **Amazon Polly** (fallback to English if unsupported)
+
+This entire process runs within a single, cost-efficient Lambda execution.
+
+---
+
+## 🚀 CI/CD Deployment Flow
+
+1. ✅ Code pushed to `master` branch
+2. ↺ Triggers **AWS CodePipeline**
+3. 💠 **CodeBuild**:
+
+   * Packages Lambda source into a zip
+   * Uploads artifacts to S3
+   * Pulls secrets/config from SSM
+   * Runs `terraform apply`
+4. 📦 Lambda and infrastructure are deployed/updated seamlessly
 
 ---
 
@@ -65,86 +88,70 @@ This repository contains the **infrastructure as code (IaC)** and **Lambda codeb
 
 ```
 .
-├── infra/                  # Terraform configurations
+├── infra/                     # Terraform configs
 │   ├── main.tf
 │   └── lambda_env_vars.tf.json
 │
 ├── lambdas/
 │   └── voicenest_serverless/
-│       ├── handler.py      # Main Lambda logic
+│       ├── handler.py         # Main Lambda logic
 │       └── requirements.txt
 │
 ├── scripts/
-│   ├── package_lambdas.sh  # Lambda packaging & deployment
+│   ├── package_lambdas.sh     # Lambda packaging script
 │   └── generate_lambda_env_vars_from_ssm.py
 │
-├── dist/                   # Lambda build artifacts
-└── buildspec.yml           # CodeBuild instructions
+├── dist/                      # Lambda build artifacts
+└── buildspec.yml              # CodeBuild config
 ```
 
 ---
 
-## 🌐 API Contract
+## 🔌 API Contract
 
 **POST** `${API_GATEWAY_URL}/voice`
 
 * **Headers**: `Content-Type: multipart/form-data`
-* **Body**: `audio` file (WAV/MP3/WEBM)
-* **Returns**: `audio/mpeg` (Base64), with `x-language` header
+* **Body**: `audio` file (WAV, MP3, WebM, OGG)
+* **Returns**: `audio/mpeg` stream (Base64 encoded), with `x-language` header indicating response language
 
 ---
 
 ## 🌍 Language Support
 
-* 🔤 Transcription: Auto-detected via Amazon Transcribe
-* 🌐 Translation: 40+ languages supported
-* 🗣️ Text-to-speech: Amazon Polly (fallback to English if not supported)
+| Feature       | Technology        | Notes                           |
+| ------------- | ----------------- | ------------------------------- |
+| Transcription | Amazon Transcribe | Auto-detects spoken language    |
+| Translation   | Amazon Translate  | 40+ languages supported         |
+| Voice Output  | Amazon Polly      | Falls back to English if needed |
 
 ---
 
-## 🛠️ Infrastructure Snapshots
+## 📸 Architecture & Screenshots
 
-### 🧩 Overall Architecture & Components
+### 🎛️ Overall Infrastructure
 
-![🧩 Overall Infra](./docs/architecture.png)
+![🧹 Overall Infra](./docs/architecture.png)
 
----
-
-### 🐍 Lambda Function (Code & Configuration)
-
-#### 🧠 Source Code (handler.py + Dependencies)
+### 🐍 Lambda Function Code & Config
 
 ![Lambda Codespace](./docs/lambda-codespace.png)
-
-#### ⚙️ Runtime Config & Environment
-
 ![Lambda Config](./docs/lambda-config.png)
 
----
-
-### 🌐 API Gateway: Voice Endpoint Integration
-
-#### 🔗 Route: `POST /voice` → Lambda
+### 🌐 API Gateway Integration
 
 ![API Gateway](./docs/api-gateway.png)
 
----
-
-### 🔄 CI/CD Pipeline: GitHub → Build → Deploy
-
-#### 📦 CodePipeline: Full Deployment Flow
+### ↺ CI/CD: CodePipeline + CodeBuild
 
 ![CodePipeline](./docs/codepipeline-execution.png)
-
-#### 🔧 CodeBuild: Lambda Packaging & Terraform
-
 ![CodeBuild](./docs/codebuild-success.png)
 
 ---
 
-## 📥 Setup Instructions
+## 📥 Setup & Deployment Guide
 
-### 1. Clone
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/shadreza/voicenest-serverless.git
@@ -157,13 +164,15 @@ cd voicenest-serverless
 brew install terraform
 ```
 
-### 3. Configure AWS
+### 3. Configure AWS Credentials
 
 ```bash
 aws configure
 ```
 
-### 4. Bootstrap S3 + DynamoDB for Terraform backend
+### 4. Configure Terraform Backend
+
+Edit your `main.tf`:
 
 ```hcl
 terraform {
@@ -177,7 +186,7 @@ terraform {
 }
 ```
 
-### 5. Deploy
+### 5. Deploy the Infrastructure
 
 ```bash
 scripts/package_lambdas.sh
@@ -188,7 +197,24 @@ terraform apply -auto-approve
 
 ---
 
-## 👨‍💻 Author
+## 🏁 Hackathon Compliance: AWS Lambda Usage
+
+VoiceNest fulfills the core criteria for the AWS Lambda Hackathon:
+
+* ✅ **Lambda as the core compute service** — orchestrates AI workflows
+* ✅ **Trigger via API Gateway** — listens for frontend voice submissions
+* ✅ **Multiple AWS integrations** — including Transcribe, Translate, Polly, Comprehend, S3, CodePipeline, and more
+* ✅ **Fully Serverless** — cost-efficient and production-ready
+
+All backend logic and infrastructure were developed entirely within the hackathon window.
+
+---
+
+## 👤 Author
 
 **Muhammad Shad Reza**
-🌐 [LinkedIn](https://linkedin.com/in/shadreza100) • 🛠️ [GitHub](https://github.com/shadreza)
+🌐 [LinkedIn](https://linkedin.com/in/shadreza100) • 💠 [GitHub](https://github.com/shadreza)
+
+---
+
+> 💜 Built with care for those who just want someone to talk to.
