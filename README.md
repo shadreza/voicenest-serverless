@@ -16,7 +16,22 @@ Built from scratch during the AWS Lambda Hackathon 2025, the infrastructure and 
 
 ---
 
-## 💠 Tech Stack
+## 🌟 How VoiceNest Uses AWS Lambda
+
+AWS Lambda is the **central compute service** behind VoiceNest, handling the entire voice processing workflow in a single function execution:
+
+1. Receives user voice recordings via **API Gateway**
+2. Transcribes speech using **Amazon Transcribe**
+3. Detects language and sentiment with **Amazon Comprehend**
+4. Translates to/from English using **Amazon Translate** (if needed)
+5. Sends text to **Cohere** for empathetic response generation
+6. Synthesizes the AI response into speech via **Amazon Polly**
+
+This orchestrated pipeline demonstrates Lambda's power to integrate diverse AWS services efficiently in real-time.
+
+---
+
+## 🔠 Tech Stack
 
 ### 🧑‍💻 Languages & Frameworks
 
@@ -74,13 +89,13 @@ This entire process runs within a single, cost-efficient Lambda execution.
 
 1. ✅ Code pushed to `master` branch
 2. ↺ Triggers **AWS CodePipeline**
-3. 💠 **CodeBuild**:
+3. 🔠 **CodeBuild**:
 
    * Packages Lambda source into a zip
    * Uploads artifacts to S3
    * Pulls secrets/config from SSM
    * Runs `terraform apply`
-4. 📦 Lambda and infrastructure are deployed/updated seamlessly
+4. 📆 Lambda and infrastructure are deployed/updated seamlessly
 
 ---
 
@@ -129,9 +144,9 @@ This entire process runs within a single, cost-efficient Lambda execution.
 
 ## 📸 Architecture & Screenshots
 
-### 🎛️ Overall Infrastructure
+### 🎻 Overall Infrastructure
 
-![🧹 Overall Infra](./docs/architecture.png)
+![🚩 Overall Infra](./docs/architecture.png)
 
 ### 🐍 Lambda Function Code & Config
 
