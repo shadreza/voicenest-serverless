@@ -166,6 +166,9 @@ def handler(event, context):
             logger.info(f"No Polly voice found for {lang_code}, falling back to English (Joanna)")
             voice_id = "Joanna"
             spoken_lang_code = "en"
+
+            fallback_notice = "I'm really sorry, I haven't learned your mother tongue yet, so I'll speak in English. "
+
             if lang_code != "en":
                 try:
                     fallback_translation = translate.translate_text(
@@ -173,11 +176,13 @@ def handler(event, context):
                         SourceLanguageCode=lang_code,
                         TargetLanguageCode="en"
                     )
-                    final_reply = fallback_translation["TranslatedText"]
+                    final_reply = fallback_notice + fallback_translation["TranslatedText"]
                     logger.info(f"Translated fallback response to English: {final_reply}")
                 except Exception as e:
                     logger.warning(f"Fallback translation to English failed: {str(e)}")
-                    final_reply = reply
+                    final_reply = fallback_notice + reply
+            else:
+                final_reply = fallback_notice + reply
 
         # Then synthesize speech with polly using final_reply and voice_id
         try:
