@@ -12,7 +12,7 @@
 
 This backend repository implements the **serverless engine** behind VoiceNest. Using **AWS Lambda as the core compute layer**, it processes voice input, understands emotions, and generates spoken responses in over 40 languages — providing companionship through natural conversation.
 
-Built from scratch during the AWS Lambda Hackathon 2025, the infrastructure and Lambda logic were fully developed during the submission period.
+Built from scratch during the AWS Lambda Hackathon 2025, the infrastructure and Lambda logic were fully developed during the submission period. The frontend for this project can be found [here](https://github.com/shadreza/voicenest-app).
 
 ---
 
